@@ -1,4 +1,4 @@
-# Ultimate Stock Valuation Dashboard
+# Stock Valuation Dashboard
 
 Automate your fundamental analysis with this Python-powered Google Sheets dashboard. Fetch real-time data from Yahoo Finance for both Thai (SET) and International stocks, calculate advanced valuation metrics (DCF, Graham Number, PEG), and keep your data organized with automatic formatting.
 
