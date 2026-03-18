@@ -1,0 +1,16 @@
+# Google Cloud Credentials (SENSITIVE)
+credentials.json
+
+# Local Python Environment
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Project specific
+Stock Bot/credentials.json
