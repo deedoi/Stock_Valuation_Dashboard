@@ -87,5 +87,6 @@ To connect this script to your Google Sheet, you must first set up a Service Acc
 - **Missing PEG:** Ensure you have a value in "Previous EPS" or that Yahoo Finance has growth data for that ticker.
 - **Unauthorized Error:** Double-check that you have shared your Google Sheet with the Service Account email.
 
+![Dashboard Preview](dashboard.png)
 ---
 *Note: This tool is for educational purposes only. Always perform your own due diligence before making investment decisions.*
