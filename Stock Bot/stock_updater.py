@@ -7,7 +7,7 @@ import requests
 CREDENTIALS_FILE = "credentials.json" 
 
 # Paste the full URL of your Google Sheet here
-SHEET_URL = "PASTE_YOUR_GOOGLE_SHEET_URL_HERE" 
+SHEET_URL = "https://docs.google.com/spreadsheets/d/YOUR_ID_HERE/edit" 
 # ---------------------
 
 print("Connecting to Google Sheets...")
@@ -253,47 +253,158 @@ try:
     start_col = min([c for c in col_map.values() if c is not None and c > 2])
     end_col = max([c for c in col_map.values() if c is not None])
     
-    body = {
-        "requests": [
-            # 1. Freeze first column (A) and header row (1)
-            {
-                "updateSheetProperties": {
-                    "properties": {
-                        "sheetId": sheet.id,
-                        "gridProperties": {
-                            "frozenRowCount": 1,
-                            "frozenColumnCount": 1
-                        }
-                    },
-                    "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount"
-                }
-            },
-            # 2. Red Text for negative numbers
-            {
-                "addConditionalFormatRule": {
-                    "rule": {
-                        "ranges": [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": start_col-1, "endColumnIndex": end_col}],
-                        "booleanRule": {
-                            "condition": {"type": "NUMBER_LESS", "values": [{"userEnteredValue": "0"}]},
-                            "format": {"textFormat": {"foregroundColor": {"red": 0.8, "green": 0, "blue": 0}}}
-                        }
-                    },
-                    "index": 0
-                }
-            },
-            # 3. Right alignment for data columns
-            {
-                "repeatCell": {
-                    "range": {"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": start_col-1, "endColumnIndex": end_col},
-                    "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT"}},
-                    "fields": "userEnteredFormat.horizontalAlignment"
-                }
+    requests = [
+        # 1. Freeze first column (A) and header row (1)
+        {
+            "updateSheetProperties": {
+                "properties": {
+                    "sheetId": sheet.id,
+                    "gridProperties": {
+                        "frozenRowCount": 1,
+                        "frozenColumnCount": 1
+                    }
+                },
+                "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount"
             }
-        ]
-    }
-    sheet.spreadsheet.batch_update(body)
+        },
+        # 2. Right alignment for data columns
+        {
+            "repeatCell": {
+                "range": {"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": start_col-1, "endColumnIndex": end_col},
+                "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT"}},
+                "fields": "userEnteredFormat.horizontalAlignment"
+            }
+        }
+    ]
+
+    # --- Task: Custom Conditional Formatting for ROE and Earning Yield ---
+    # We add these rules at index 0 in the list of rules. 
+    # The last ones we add will be at the very top (checked first).
+
+    # 1. Earning Yield Column (> 5% Green, < 2% Red)
+    if col_map["yield"]:
+        y_idx = col_map["yield"] - 1
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": y_idx, "endColumnIndex": y_idx + 1}],
+                    "booleanRule": {
+                        "condition": {"type": "NUMBER_LESS", "values": [{"userEnteredValue": "0.02"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0.8, "green": 0, "blue": 0}}}
+                    }
+                }, "index": 0
+            }
+        })
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": y_idx, "endColumnIndex": y_idx + 1}],
+                    "booleanRule": {
+                        "condition": {"type": "NUMBER_GREATER", "values": [{"userEnteredValue": "0.05"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0.6, "blue": 0}}}
+                    }
+                }, "index": 0
+            }
+        })
+
+    # 2. ROE Column (> 20% Green, > 100% Yellow Background)
+    if col_map["roe"]:
+        r_idx = col_map["roe"] - 1
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": r_idx, "endColumnIndex": r_idx + 1}],
+                    "booleanRule": {
+                        "condition": {"type": "NUMBER_GREATER", "values": [{"userEnteredValue": "0.2"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0.6, "blue": 0}}}
+                    }
+                }, "index": 0
+            }
+        })
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": r_idx, "endColumnIndex": r_idx + 1}],
+                    "booleanRule": {
+                        "condition": {"type": "NUMBER_GREATER", "values": [{"userEnteredValue": "1"}]},
+                        "format": {
+                            "backgroundColor": {"red": 1, "green": 1, "blue": 0},
+                            "textFormat": {"foregroundColor": {"red": 0, "green": 0.6, "blue": 0}}
+                        }
+                    }
+                }, "index": 0
+            }
+        })
+
+    # 3. Earning Growth Rate Column (> 20% Green, > 100% Green Bold)
+    if col_map["growth"]:
+        g_idx = col_map["growth"] - 1
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": g_idx, "endColumnIndex": g_idx + 1}],
+                    "booleanRule": {
+                        "condition": {"type": "NUMBER_GREATER", "values": [{"userEnteredValue": "0.2"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0.6, "blue": 0}}}
+                    }
+                }, "index": 0
+            }
+        })
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": g_idx, "endColumnIndex": g_idx + 1}],
+                    "booleanRule": {
+                        "condition": {"type": "NUMBER_GREATER", "values": [{"userEnteredValue": "1"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0.6, "blue": 0}, "bold": True}}
+                    }
+                }, "index": 0
+            }
+        })
+
+    # 4. PEG Ratio Column (> 2.5 Red Bold, 0 to 1.0 Green)
+    if col_map["peg"]:
+        p_idx = col_map["peg"] - 1
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": p_idx, "endColumnIndex": p_idx + 1}],
+                    "booleanRule": {
+                        "condition": {"type": "NUMBER_BETWEEN", "values": [{"userEnteredValue": "0.01"}, {"userEnteredValue": "1"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0.6, "blue": 0}}}
+                    }
+                }, "index": 0
+            }
+        })
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": p_idx, "endColumnIndex": p_idx + 1}],
+                    "booleanRule": {
+                        "condition": {"type": "NUMBER_GREATER", "values": [{"userEnteredValue": "2.5"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0.8, "green": 0, "blue": 0}, "bold": True}}
+                    }
+                }, "index": 0
+            }
+        })
+
+    # 5. Global Red Text for negative numbers (at index 0 so it's priority #1)
+    requests.append({
+        "addConditionalFormatRule": {
+            "rule": {
+                "ranges": [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": start_col-1, "endColumnIndex": end_col}],
+                "booleanRule": {
+                    "condition": {"type": "NUMBER_LESS", "values": [{"userEnteredValue": "0"}]},
+                    "format": {"textFormat": {"foregroundColor": {"red": 0.8, "green": 0, "blue": 0}}}
+                }
+            },
+            "index": 0
+        }
+    })
+
+    sheet.spreadsheet.batch_update({"requests": requests})
     print("✅ Formatting and Freezing applied!")
-except Exception:
-    print("⚠️ Formatting applied (some steps might have been skipped).")
+except Exception as e:
+    print(f"⚠️ Formatting applied (some steps might have been skipped). Error: {e}")
     
 print("🎉 All stocks updated successfully! You can now delete any column you don't want.")
