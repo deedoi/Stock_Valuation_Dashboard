@@ -341,12 +341,17 @@ try:
         }
     })
     
-    # 2. Right alignment for data columns
+    # 2. Right alignment and clear background for data columns
     requests.append({
         "repeatCell": {
-            "range": {"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": start_col-1, "endColumnIndex": end_col},
-            "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT"}},
-            "fields": "userEnteredFormat.horizontalAlignment"
+            "range": {"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": start_col-1, "endColumnIndex": end_col + 5},
+            "cell": {
+                "userEnteredFormat": {
+                    "horizontalAlignment": "RIGHT",
+                    "backgroundColor": {"red": 1, "green": 1, "blue": 1} # Set background to pure white
+                }
+            },
+            "fields": "userEnteredFormat.horizontalAlignment,userEnteredFormat.backgroundColor"
         }
     })
 
@@ -380,7 +385,7 @@ try:
             }
         })
 
-    # 2. ROE Column (> 20% Green, > 100% Yellow Background)
+    # 2. ROE Column (> 20% Green)
     if col_map["roe"]:
         r_idx = col_map["roe"] - 1
         requests.append({
@@ -390,20 +395,6 @@ try:
                     "booleanRule": {
                         "condition": {"type": "NUMBER_GREATER", "values": [{"userEnteredValue": "0.2"}]},
                         "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0.6, "blue": 0}}}
-                    }
-                }, "index": 0
-            }
-        })
-        requests.append({
-            "addConditionalFormatRule": {
-                "rule": {
-                    "ranges": [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": r_idx, "endColumnIndex": r_idx + 1}],
-                    "booleanRule": {
-                        "condition": {"type": "NUMBER_GREATER", "values": [{"userEnteredValue": "1"}]},
-                        "format": {
-                            "backgroundColor": {"red": 1, "green": 1, "blue": 0},
-                            "textFormat": {"foregroundColor": {"red": 0, "green": 0.6, "blue": 0}}
-                        }
                     }
                 }, "index": 0
             }
@@ -617,34 +608,6 @@ try:
                 "booleanRule": {
                     "condition": {"type": "NUMBER_LESS", "values": [{"userEnteredValue": "0"}]},
                     "format": {"textFormat": {"foregroundColor": {"red": 0.8, "green": 0, "blue": 0}}}
-                }
-            },
-            "index": 0
-        }
-    })
-
-    # 9. Yellow background for positive numbers >= 40
-    requests.append({
-        "addConditionalFormatRule": {
-            "rule": {
-                "ranges": [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": start_col-1, "endColumnIndex": end_col}],
-                "booleanRule": {
-                    "condition": {"type": "NUMBER_GREATER_THAN_EQ", "values": [{"userEnteredValue": "40"}]},
-                    "format": {"backgroundColor": {"red": 1, "green": 1, "blue": 0}}
-                }
-            },
-            "index": 0
-        }
-    })
-
-    # 10. Light purple background for negative numbers <= -40
-    requests.append({
-        "addConditionalFormatRule": {
-            "rule": {
-                "ranges": [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": start_col-1, "endColumnIndex": end_col}],
-                "booleanRule": {
-                    "condition": {"type": "NUMBER_LESS_THAN_EQ", "values": [{"userEnteredValue": "-40"}]},
-                    "format": {"backgroundColor": {"red": 0.9, "green": 0.7, "blue": 1}}
                 }
             },
             "index": 0
