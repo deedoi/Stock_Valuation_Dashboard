@@ -7,7 +7,7 @@ import requests
 CREDENTIALS_FILE = "credentials.json" 
 
 # Paste the full URL of your Google Sheet here
-SHEET_URL = "https://docs.google.com/spreadsheets/d/YOUR_ID_HERE/edit" 
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1n0PkOHpwjyXObyJVwNDJUPD4pSut4JVHErfywnHZa5c/edit?gid=2110150956#gid=2110150956" 
 # ---------------------
 
 print("Connecting to Google Sheets...")
@@ -45,11 +45,18 @@ headers = records[0]
 # --- DYNAMIC COLUMN MAPPING ---
 # This helper finds the position of a column by its name so you can move/delete columns!
 def find_col(name):
+    name_lower = name.lower().strip()
     try:
-        # Returns 1-based index for gspread, 0-based index for records list
-        idx = next(i for i, h in enumerate(headers) if name.lower() in h.lower())
-        return idx + 1
-    except StopIteration:
+        # 1. Try exact match first (highest priority)
+        for i, h in enumerate(headers):
+            if h.lower().strip() == name_lower:
+                return i + 1
+        # 2. Fallback to "contains" if no exact match (for columns like 'Yield (%)')
+        for i, h in enumerate(headers):
+            if name_lower in h.lower():
+                return i + 1
+        return None
+    except Exception:
         return None
 
 col_map = {
@@ -57,6 +64,8 @@ col_map = {
     "price": find_col("Price"),
     "mcap": find_col("Current MCap"),
     "pe": find_col("P/E"),
+    "avg_pe": find_col("5Y Avg PE"),
+    "pe_dist": find_col("PE Distance %"),
     "prev_eps": find_col("Previous EPS"),
     "curr_eps": find_col("Current EPS"),
     "yield": find_col("Yield (%)"),
@@ -65,9 +74,24 @@ col_map = {
     "dividend": find_col("Dividend %"),
     "roe": find_col("ROE"),
     "graham": find_col("Graham"),
-    "relative_pe": find_col("Relatuve PE Val"), # Matches your current typo "Relatuve"
-    "dcf": find_col("DCF")
+    "relative_pe": find_col("Relative PE Val"), # Fixed typo from 'Relatuve' to 'Relative'
+    "dcf": find_col("DCF"),
+    "net_profit": find_col("Net Profit"),
+    "net_margin": find_col("Net Profit%"),
+    "fcf_net_income": find_col("FCF to NetIncome"),
+    "fcf_margin": find_col("FCF Margin"),
+    "fcf_yield": find_col("FCF Yield"),
+    "fcf_debt": find_col("FCF to Debt")
 }
+
+# Helper to convert a column index (e.g., 5) to a letter (e.g., "E")
+def col_letter(idx):
+    if idx is None: return ""
+    result = ""
+    while idx > 0:
+        idx, remainder = divmod(idx - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
 
 # Create a list to hold all our batch updates
 cells_to_update = []
@@ -147,6 +171,34 @@ for i in range(1, len(records)):
         raw_roe = get_raw("financialData", "returnOnEquity")
         roe = f"{float(raw_roe) * 100:.2f}%" if raw_roe != "" else ""
 
+        # --- NEW FCF METRICS ---
+        raw_fcf = get_raw("financialData", "freeCashflow")
+        raw_net_income = get_raw("defaultKeyStatistics", "netIncomeToCommon")
+        raw_revenue = get_raw("financialData", "totalRevenue")
+        raw_debt = get_raw("financialData", "totalDebt")
+
+        fcf_net_income = ""
+        if raw_fcf != "" and raw_net_income != "" and float(raw_net_income) != 0:
+            fcf_net_income = f"{float(raw_fcf) / float(raw_net_income):.2f}"
+
+        fcf_margin = ""
+        if raw_fcf != "" and raw_revenue != "" and float(raw_revenue) != 0:
+            fcf_margin = f"{(float(raw_fcf) / float(raw_revenue)) * 100:.2f}%"
+
+        fcf_yield = ""
+        if raw_fcf != "" and raw_mcap != "" and float(raw_mcap) != 0:
+            fcf_yield = f"{(float(raw_fcf) / float(raw_mcap)) * 100:.2f}%"
+
+        fcf_debt = ""
+        if raw_fcf != "" and raw_debt != "" and float(raw_debt) != 0:
+            fcf_debt = f"{float(raw_fcf) / float(raw_debt):.2f}"
+
+        net_margin = ""
+        if raw_net_income != "" and raw_revenue != "" and float(raw_revenue) != 0:
+            net_margin = f"{(float(raw_net_income) / float(raw_revenue)) * 100:.2f}%"
+
+        net_profit_formatted = format_large_number(raw_net_income) if raw_net_income != "" else ""
+
         # --- RE-MAPPING AND CALCULATIONS BASED ON PENDING PROJECT REQUIREMENTS ---
         row_num = i + 1
         
@@ -203,6 +255,19 @@ for i in range(1, len(records)):
         add_cell("peg", peg_ratio)
         add_cell("dividend", dividend)
         add_cell("roe", roe)
+        add_cell("net_profit", net_profit_formatted)
+        add_cell("net_margin", net_margin)
+        add_cell("fcf_net_income", fcf_net_income)
+        add_cell("fcf_margin", fcf_margin)
+        add_cell("fcf_yield", fcf_yield)
+        add_cell("fcf_debt", fcf_debt)
+        
+        # PE Distance Formula
+        if col_map["pe"] and col_map["avg_pe"] and col_map["pe_dist"]:
+            pe_c = col_letter(col_map["pe"])
+            avg_c = col_letter(col_map["avg_pe"])
+            formula = f"=IF(AND({pe_c}{row_num}<>\"\", {avg_c}{row_num}<>\"\"), ({pe_c}{row_num}-{avg_c}{row_num})/{avg_c}{row_num}, \"\")"
+            cells_to_update.append(gspread.Cell(row_num, col_map["pe_dist"], formula))
         
         # --- ENHANCED VALUATION CALCULATIONS ---
         try:
@@ -249,33 +314,41 @@ if cells_to_update:
 # --- APPLY FORMATTING (RED FOR NEGATIVE, RIGHT ALIGN, & FREEZE) ---
 print("Applying formatting (Red for negatives, Right align, & Freezing column A)...")
 try:
+    # 0. Clear all existing conditional formatting to prevent rules from piling up
+    # We first fetch the current rules to know how many to delete
+    full_sheet_data = sheet.spreadsheet.fetch_sheet_metadata()
+    current_sheet_meta = next(s for s in full_sheet_data['sheets'] if s['properties']['sheetId'] == sheet.id)
+    num_rules = len(current_sheet_meta.get('conditionalFormats', []))
+    
+    # Start with deletion requests for every existing rule
+    requests = [{"deleteConditionalFormatRule": {"index": 0, "sheetId": sheet.id}} for _ in range(num_rules)]
+    
     # Find the start and end of our data columns for formatting
     start_col = min([c for c in col_map.values() if c is not None and c > 2])
     end_col = max([c for c in col_map.values() if c is not None])
     
-    requests = [
-        # 1. Freeze first column (A) and header row (1)
-        {
-            "updateSheetProperties": {
-                "properties": {
-                    "sheetId": sheet.id,
-                    "gridProperties": {
-                        "frozenRowCount": 1,
-                        "frozenColumnCount": 1
-                    }
-                },
-                "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount"
-            }
-        },
-        # 2. Right alignment for data columns
-        {
-            "repeatCell": {
-                "range": {"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": start_col-1, "endColumnIndex": end_col},
-                "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT"}},
-                "fields": "userEnteredFormat.horizontalAlignment"
-            }
+    # 1. Freeze first column (A) and header row (1)
+    requests.append({
+        "updateSheetProperties": {
+            "properties": {
+                "sheetId": sheet.id,
+                "gridProperties": {
+                    "frozenRowCount": 1,
+                    "frozenColumnCount": 1
+                }
+            },
+            "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount"
         }
-    ]
+    })
+    
+    # 2. Right alignment for data columns
+    requests.append({
+        "repeatCell": {
+            "range": {"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": start_col-1, "endColumnIndex": end_col},
+            "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT"}},
+            "fields": "userEnteredFormat.horizontalAlignment"
+        }
+    })
 
     # --- Task: Custom Conditional Formatting for ROE and Earning Yield ---
     # We add these rules at index 0 in the list of rules. 
@@ -388,7 +461,155 @@ try:
             }
         })
 
-    # 5. Global Red Text for negative numbers (at index 0 so it's priority #1)
+    # 5. Net Profit Margin Column (> 50% Bold Green)
+    if col_map["net_margin"]:
+        m_idx = col_map["net_margin"] - 1
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": m_idx, "endColumnIndex": m_idx + 1}],
+                    "booleanRule": {
+                        "condition": {"type": "NUMBER_GREATER", "values": [{"userEnteredValue": "0.5"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0.6, "blue": 0}, "bold": True}}
+                    }
+                }, "index": 0
+            }
+        })
+
+    # 6. P/E Comparison (4-Color Heat Map)
+    if col_map["pe"] and col_map["avg_pe"]:
+        pe_idx = col_map["pe"] - 1
+        avg_pe_idx = col_map["avg_pe"] - 1
+        pe_col = col_letter(col_map["pe"])
+        avg_pe_col = col_letter(col_map["avg_pe"])
+        
+        # Ensure 5Y Avg PE is formatted as a number (not %)
+        requests.append({
+            "repeatCell": {
+                "range": {"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": avg_pe_idx, "endColumnIndex": avg_pe_idx + 1},
+                "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "0.00"}}},
+                "fields": "userEnteredFormat.numberFormat"
+            }
+        })
+
+        pe_range = [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": pe_idx, "endColumnIndex": pe_idx + 1}]
+        
+        # 1. Light Green (Current < Average)
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": pe_range,
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=AND({avg_pe_col}2 <> \"\", {pe_col}2 < {avg_pe_col}2)"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0.6, "blue": 0}}}
+                    }
+                }, "index": 0
+            }
+        })
+        
+        # 2. Light Red (Current > Average)
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": pe_range,
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=AND({avg_pe_col}2 <> \"\", {pe_col}2 > {avg_pe_col}2)"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0.9, "green": 0.4, "blue": 0.4}}}
+                    }
+                }, "index": 0
+            }
+        })
+        
+        # 3. Dark Green (Deep Value: Current <= 80% of Average)
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": pe_range,
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=AND({avg_pe_col}2 <> \"\", {pe_col}2 <= ({avg_pe_col}2 * 0.8))"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0.4, "blue": 0}, "bold": True}}
+                    }
+                }, "index": 0
+            }
+        })
+        
+        # 4. Dark Red (Overheated: Current >= 120% of Average)
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": pe_range,
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f"=AND({avg_pe_col}2 <> \"\", {pe_col}2 >= ({avg_pe_col}2 * 1.2))"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0.7, "green": 0, "blue": 0}, "bold": True}}
+                    }
+                }, "index": 0
+            }
+        })
+
+    # 7. PE Distance Column (4-Color Heat Map + Percentage Format)
+    if col_map["pe_dist"]:
+        d_idx = col_map["pe_dist"] - 1
+        d_range = [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": d_idx, "endColumnIndex": d_idx + 1}]
+        
+        # Number Format (Decimal)
+        requests.append({
+            "repeatCell": {
+                "range": d_range[0],
+                "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "0.00"}}},
+                "fields": "userEnteredFormat.numberFormat"
+            }
+        })
+        
+        # 1. Light Green (< 0)
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": d_range,
+                    "booleanRule": {
+                        "condition": {"type": "NUMBER_LESS", "values": [{"userEnteredValue": "0"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0.6, "blue": 0}}}
+                    }
+                }, "index": 0
+            }
+        })
+        # 2. Light Red (> 0)
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": d_range,
+                    "booleanRule": {
+                        "condition": {"type": "NUMBER_GREATER", "values": [{"userEnteredValue": "0"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0.9, "green": 0.4, "blue": 0.4}}}
+                    }
+                }, "index": 0
+            }
+        })
+        # 3. Dark Green (<= -20%)
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": d_range,
+                    "booleanRule": {
+                        "condition": {"type": "NUMBER_LESS_THAN_EQ", "values": [{"userEnteredValue": "-0.2"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0, "green": 0.4, "blue": 0}, "bold": True}}
+                    }
+                }, "index": 0
+            }
+        })
+        # 4. Dark Red (>= 20%)
+        requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": d_range,
+                    "booleanRule": {
+                        "condition": {"type": "NUMBER_GREATER_THAN_EQ", "values": [{"userEnteredValue": "0.2"}]},
+                        "format": {"textFormat": {"foregroundColor": {"red": 0.7, "green": 0, "blue": 0}, "bold": True}}
+                    }
+                }, "index": 0
+            }
+        })
+
+    # 8. Global Red Text for negative numbers (at index 0 so it's priority #1)
     requests.append({
         "addConditionalFormatRule": {
             "rule": {
@@ -396,6 +617,34 @@ try:
                 "booleanRule": {
                     "condition": {"type": "NUMBER_LESS", "values": [{"userEnteredValue": "0"}]},
                     "format": {"textFormat": {"foregroundColor": {"red": 0.8, "green": 0, "blue": 0}}}
+                }
+            },
+            "index": 0
+        }
+    })
+
+    # 9. Yellow background for positive numbers >= 40
+    requests.append({
+        "addConditionalFormatRule": {
+            "rule": {
+                "ranges": [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": start_col-1, "endColumnIndex": end_col}],
+                "booleanRule": {
+                    "condition": {"type": "NUMBER_GREATER_THAN_EQ", "values": [{"userEnteredValue": "40"}]},
+                    "format": {"backgroundColor": {"red": 1, "green": 1, "blue": 0}}
+                }
+            },
+            "index": 0
+        }
+    })
+
+    # 10. Light purple background for negative numbers <= -40
+    requests.append({
+        "addConditionalFormatRule": {
+            "rule": {
+                "ranges": [{"sheetId": sheet.id, "startRowIndex": 1, "startColumnIndex": start_col-1, "endColumnIndex": end_col}],
+                "booleanRule": {
+                    "condition": {"type": "NUMBER_LESS_THAN_EQ", "values": [{"userEnteredValue": "-40"}]},
+                    "format": {"backgroundColor": {"red": 0.9, "green": 0.7, "blue": 1}}
                 }
             },
             "index": 0
